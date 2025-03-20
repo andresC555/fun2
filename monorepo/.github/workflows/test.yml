@@ -1,0 +1,59 @@
+name: Test
+
+on:
+  push:
+    branches: [ main ]
+  pull_request:
+    branches: [ main ]
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        python-version: [3.9]
+
+    steps:
+    - uses: actions/checkout@v3
+    
+    - name: Set up Python ${{ matrix.python-version }}
+      uses: actions/setup-python@v4
+      with:
+        python-version: ${{ matrix.python-version }}
+    
+    - name: Cache Pants
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/pants
+          ~/.pants.d
+        key: ${{ runner.os }}-pants-${{ hashFiles('pants.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pants-
+    
+    - name: Install Pants
+      run: |
+        curl -L -O https://github.com/pantsbuild/pants/releases/download/release_2.15.0/pants
+        chmod +x ./pants
+    
+    - name: Lint
+      run: |
+        ./pants lint ::
+    
+    - name: Type check
+      run: |
+        ./pants typecheck ::
+    
+    - name: Test
+      run: |
+        ./pants test ::
+    
+    - name: Build Docker images
+      run: |
+        ./pants package ::
+    
+    - name: Upload coverage reports
+      uses: codecov/codecov-action@v3
+      with:
+        directory: dist/coverage/python
+        fail_ci_if_error: false

@@ -1,0 +1,50 @@
+[GLOBAL]
+pants_version = "2.15.0"
+backend_packages = [
+  "pants.backend.python",
+  "pants.backend.python.lint.black",
+  "pants.backend.python.lint.flake8",
+  "pants.backend.python.lint.isort",
+  "pants.backend.python.typecheck.mypy",
+  "pants.backend.docker",
+  "pants.backend.shell",
+]
+
+[source]
+root_patterns = [
+  "/shared",
+  "/services",
+]
+
+[python]
+interpreter_constraints = ["CPython>=3.9,<3.11"]
+enable_resolves = true
+
+[python.resolves]
+default = "3rdparty/python/default.lock"
+
+[pytest]
+args = ["-xvs"]
+
+[test]
+use_coverage = true
+output = "coverage"
+
+[docker]
+build_args = ["--progress=plain"]
+registries = { default = { use = true } }
+
+[docker.build]
+extra_build_args = ["--platform=linux/amd64"]
+
+[flake8]
+args = ["--max-line-length=100"]
+
+[black]
+args = ["--line-length=100"]
+
+[isort]
+args = ["--profile=black"]
+
+[mypy]
+args = ["--ignore-missing-imports", "--disallow-untyped-defs"]

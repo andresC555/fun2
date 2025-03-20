@@ -1,0 +1,128 @@
+name: Deploy
+
+on:
+  push:
+    branches: [ main ]
+    tags: [ 'v*' ]
+
+jobs:
+  build-and-deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+    - uses: actions/checkout@v3
+      with:
+        fetch-depth: 0  # Fetch all history for proper change detection
+    
+    - name: Set up Python
+      uses: actions/setup-python@v4
+      with:
+        python-version: '3.9'
+    
+    - name: Cache Pants
+      uses: actions/cache@v3
+      with:
+        path: |
+          ~/.cache/pants
+          ~/.pants.d
+        key: ${{ runner.os }}-pants-${{ hashFiles('pants.toml') }}
+        restore-keys: |
+          ${{ runner.os }}-pants-
+    
+    - name: Install Pants
+      run: |
+        curl -L -O https://github.com/pantsbuild/pants/releases/download/release_2.15.0/pants
+        chmod +x ./pants
+    
+    - name: Set up Docker Buildx
+      uses: docker/setup-buildx-action@v2
+    
+    - name: Login to Docker Hub
+      uses: docker/login-action@v2
+      with:
+        username: ${{ secrets.DOCKERHUB_USERNAME }}
+        password: ${{ secrets.DOCKERHUB_TOKEN }}
+    
+    - name: Determine changed services
+      id: changes
+      run: |
+        if [[ "${{ github.ref_type }}" == "tag" ]]; then
+          echo "Building all services for tag release"
+          echo "services=api_gateway,user_service,product_service,notification_service" >> $GITHUB_OUTPUT
+        else
+          # Get the base commit for change detection
+          if [[ "${{ github.event_name }}" == "pull_request" ]]; then
+            BASE_COMMIT=${{ github.event.pull_request.base.sha }}
+          else
+            BASE_COMMIT=$(git rev-parse HEAD~1)
+          fi
+          
+          # Detect changed services
+          CHANGED_SERVICES=""
+          
+          if git diff --name-only $BASE_COMMIT HEAD | grep -q "^services/api_gateway/"; then
+            CHANGED_SERVICES="${CHANGED_SERVICES},api_gateway"
+          fi
+          
+          if git diff --name-only $BASE_COMMIT HEAD | grep -q "^services/user_service/"; then
+            CHANGED_SERVICES="${CHANGED_SERVICES},user_service"
+          fi
+          
+          if git diff --name-only $BASE_COMMIT HEAD | grep -q "^services/product_service/"; then
+            CHANGED_SERVICES="${CHANGED_SERVICES},product_service"
+          fi
+          
+          if git diff --name-only $BASE_COMMIT HEAD | grep -q "^services/notification_service/"; then
+            CHANGED_SERVICES="${CHANGED_SERVICES},notification_service"
+          fi
+          
+          # If shared code changed, rebuild all services
+          if git diff --name-only $BASE_COMMIT HEAD | grep -q "^shared/"; then
+            CHANGED_SERVICES="api_gateway,user_service,product_service,notification_service"
+          fi
+          
+          # Remove leading comma if present
+          CHANGED_SERVICES="${CHANGED_SERVICES#,}"
+          
+          # If no services changed, default to empty string
+          if [ -z "$CHANGED_SERVICES" ]; then
+            CHANGED_SERVICES=""
+          fi
+          
+          echo "services=$CHANGED_SERVICES" >> $GITHUB_OUTPUT
+        fi
+    
+    - name: Set version
+      id: version
+      run: |
+        if [[ "${{ github.ref_type }}" == "tag" ]]; then
+          VERSION="${{ github.ref_name }}"
+        else
+          VERSION="latest"
+        fi
+        echo "version=$VERSION" >> $GITHUB_OUTPUT
+    
+    - name: Build and push Docker images
+      if: steps.changes.outputs.services != ''
+      run: |
+        IFS=',' read -ra SERVICES <<< "${{ steps.changes.outputs.services }}"
+        for SERVICE in "${SERVICES[@]}"; do
+          echo "Building and pushing $SERVICE:${{ steps.version.outputs.version }}"
+          ./pants package services/$SERVICE:docker
+          docker tag monorepo/services/$SERVICE:latest your-registry/monorepo-$SERVICE:${{ steps.version.outputs.version }}
+          docker push your-registry/monorepo-$SERVICE:${{ steps.version.outputs.version }}
+        done
+    
+    - name: Deploy to staging
+      if: github.ref == 'refs/heads/main' && steps.changes.outputs.services != ''
+      run: |
+        echo "Deploying to staging environment"
+        # Replace with your actual deployment commands
+        # Example: kubectl apply -f kubernetes/staging/
+    
+    - name: Deploy to production
+      if: github.ref_type == 'tag' && steps.changes.outputs.services != ''
+      run: |
+        echo "Deploying to production environment"
+        # Replace with your actual deployment commands
+        # Example: kubectl apply -f kubernetes/production/

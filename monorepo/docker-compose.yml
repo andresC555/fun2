@@ -1,0 +1,141 @@
+version: '3.8'
+
+services:
+  # API Gateway Service
+  api_gateway:
+    build:
+      context: .
+      dockerfile: services/api_gateway/Dockerfile
+    ports:
+      - "8000:8000"
+    environment:
+      - USER_SERVICE_URL=http://user_service:8001
+      - PRODUCT_SERVICE_URL=http://product_service:8002
+      - NOTIFICATION_SERVICE_URL=http://notification_service:8003
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/api_gateway
+    depends_on:
+      - user_service
+      - product_service
+      - notification_service
+      - postgres
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # User Service
+  user_service:
+    build:
+      context: .
+      dockerfile: services/user_service/Dockerfile
+    ports:
+      - "8001:8001"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/user_service
+      - NOTIFICATION_SERVICE_URL=http://notification_service:8003
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Product Service
+  product_service:
+    build:
+      context: .
+      dockerfile: services/product_service/Dockerfile
+    ports:
+      - "8002:8002"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/product_service
+      - NOTIFICATION_SERVICE_URL=http://notification_service:8003
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8002/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Notification Service
+  notification_service:
+    build:
+      context: .
+      dockerfile: services/notification_service/Dockerfile
+    ports:
+      - "8003:8003"
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/notification_service
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - postgres
+      - redis
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8003/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 10s
+    restart: unless-stopped
+
+  # Notification Worker
+  notification_worker:
+    build:
+      context: .
+      dockerfile: services/notification_service/Dockerfile
+    command: ["celery", "-A", "notification_service.worker", "worker", "--loglevel=info"]
+    environment:
+      - DATABASE_URL=postgresql://postgres:postgres@postgres:5432/notification_service
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      - notification_service
+      - redis
+    restart: unless-stopped
+
+  # PostgreSQL Database
+  postgres:
+    image: postgres:14-alpine
+    ports:
+      - "5432:5432"
+    environment:
+      - POSTGRES_USER=postgres
+      - POSTGRES_PASSWORD=postgres
+      - POSTGRES_MULTIPLE_DATABASES=api_gateway,user_service,product_service,notification_service
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./scripts/init-multiple-postgres-databases.sh:/docker-entrypoint-initdb.d/init-multiple-postgres-databases.sh
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for Celery and caching
+  redis:
+    image: redis:7-alpine
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+volumes:
+  postgres_data:
+  redis_data:
